@@ -516,7 +516,12 @@ func (u Upgrader) Upgrade(conn io.ReadWriter) (hs Handshake, err error) {
 			if custom, check := u.ExtensionCustom, u.Extension; custom != nil || check != nil {
 				var ok bool
 				if custom != nil {
-					hs.Extensions, ok = custom(v, hs.Extensions)
+					hs.Extensions, ok = btsSelectExtensions(v, hs.Extensions, nil)
+					if !ok {
+						err = ErrMalformedRequest
+					} else {
+						hs.Extensions, ok = custom(v, hs.Extensions)
+					}
 				} else {
 					hs.Extensions, ok = btsSelectExtensions(v, hs.Extensions, check)
 				}

@@ -214,7 +214,7 @@ func TestNewWriterBuffer(t *testing.T) {
 					t.Errorf("unexpected panic: %v", thePanic)
 				}
 			}()
-			w := NewWriterBuffer(nil, test.state, 0, fakeMake(test.buf))
+			w := NewWriterBuffer(nil, test.state, 0, fakeMake(test.buf), false)
 			if act, exp := len(w.raw)-len(w.buf), test.expOffset; act != exp {
 				t.Errorf(
 					"NewWriteBuffer(%d bytes) has offset %d; want %d",

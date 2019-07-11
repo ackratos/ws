@@ -77,7 +77,7 @@ func (c ControlHandler) HandlePing(h ws.Header) error {
 			Fin:    true,
 			OpCode: ws.OpPong,
 			Masked: c.State.ClientSide(),
-		})
+		}, false)
 	}
 
 	// In other way reply with Pong frame with copied payload.
@@ -136,7 +136,7 @@ func (c ControlHandler) HandleClose(h ws.Header) error {
 			Fin:    true,
 			OpCode: ws.OpClose,
 			Masked: c.State.ClientSide(),
-		})
+		}, false)
 		if err != nil {
 			return err
 		}

@@ -1,6 +1,8 @@
 package wsutil
 
 import (
+	"bytes"
+	"compress/flate"
 	"fmt"
 	"io"
 
@@ -62,7 +64,7 @@ func NewControlWriterBuffer(dest io.Writer, state ws.State, op ws.OpCode, buf []
 		buf = buf[:max]
 	}
 
-	w := NewWriterBuffer(dest, state, op, buf)
+	w := NewWriterBuffer(dest, state, op, buf, false)
 
 	return &ControlWriter{
 		w:     w,
@@ -112,6 +114,7 @@ type Writer struct {
 
 	dirty      bool
 	fragmented bool
+	compress   bool
 
 	err error
 }
@@ -136,7 +139,7 @@ func GetWriter(dest io.Writer, state ws.State, op ws.OpCode, n int) *Writer {
 	}
 	// NOTE: we use m instead of n, because m is an attempt to reuse w of such
 	// size in the future.
-	return NewWriterBufferSize(dest, state, op, m)
+	return NewWriterBufferSize(dest, state, op, m, false)
 }
 
 // PutWriter puts w for future reuse by GetWriter().
@@ -147,7 +150,13 @@ func PutWriter(w *Writer) {
 
 // NewWriter returns a new Writer whose buffer has the DefaultWriteBuffer size.
 func NewWriter(dest io.Writer, state ws.State, op ws.OpCode) *Writer {
-	return NewWriterBufferSize(dest, state, op, 0)
+	return NewWriterBufferSize(dest, state, op, 0, false)
+}
+
+// NewCompressionWriter returns a new Writer whose buffer has the DefaultWriteBuffer size.
+// It will compress the data payload
+func NewCompressionWriter(dest io.Writer, state ws.State, op ws.OpCode) *Writer {
+	return NewWriterBufferSize(dest, state, op, 0, true)
 }
 
 // NewWriterSize returns a new Writer whose buffer size is at most n + ws.MaxHeaderSize.
@@ -159,7 +168,7 @@ func NewWriterSize(dest io.Writer, state ws.State, op ws.OpCode, n int) *Writer 
 	if n > 0 {
 		n += headerSize(state, n)
 	}
-	return NewWriterBufferSize(dest, state, op, n)
+	return NewWriterBufferSize(dest, state, op, n, false)
 }
 
 // NewWriterBufferSize returns a new Writer whose buffer size is equal to n.
@@ -169,11 +178,11 @@ func NewWriterSize(dest io.Writer, state ws.State, op ws.OpCode, n int) *Writer 
 // [ws.MinHeaderSize,ws.MaxHeaderSize]. That is, frames flushed by Writer
 // will not have payload length equal to n, except the case when Write() is
 // called on empty Writer with len(p) > n.
-func NewWriterBufferSize(dest io.Writer, state ws.State, op ws.OpCode, n int) *Writer {
+func NewWriterBufferSize(dest io.Writer, state ws.State, op ws.OpCode, n int, compress bool) *Writer {
 	if n <= ws.MinHeaderSize {
 		n = DefaultWriteBuffer
 	}
-	return NewWriterBuffer(dest, state, op, make([]byte, n))
+	return NewWriterBuffer(dest, state, op, make([]byte, n), compress)
 }
 
 // NewWriterBuffer returns a new Writer with buf as a buffer.
@@ -185,18 +194,19 @@ func NewWriterBufferSize(dest io.Writer, state ws.State, op ws.OpCode, n int) *W
 // header data.
 //
 // It panics if len(buf) is too small to fit header and payload data.
-func NewWriterBuffer(dest io.Writer, state ws.State, op ws.OpCode, buf []byte) *Writer {
+func NewWriterBuffer(dest io.Writer, state ws.State, op ws.OpCode, buf []byte, compress bool) *Writer {
 	offset := reserve(state, len(buf))
 	if len(buf) <= offset {
 		panic("buffer too small")
 	}
 
 	return &Writer{
-		dest:  dest,
-		raw:   buf,
-		buf:   buf[offset:],
-		state: state,
-		op:    op,
+		dest:     dest,
+		raw:      buf,
+		buf:      buf[offset:],
+		state:    state,
+		op:       op,
+		compress: compress,
 	}
 }
 
@@ -260,6 +270,18 @@ func (w *Writer) Buffered() int {
 func (w *Writer) Write(p []byte) (n int, err error) {
 	// Even empty p may make a sense.
 	w.dirty = true
+
+	if w.compress {
+		compressedP := &bytes.Buffer{}
+		buf := &closableBuffer{compressedP}
+		pool := &ws.FlateWriterPools[3]
+		tw := &ws.TruncWriter{W: buf}
+		fw, _ := flate.NewWriter(tw, 1)
+		wrapper := &ws.FlateWriteWrapper{Fw: fw, Tw: tw, P: pool}
+		wrapper.Write(p)
+		wrapper.Close()
+		p = compressedP.Bytes()
+	}
 
 	var nn int
 	for len(p) > w.Available() && w.err == nil {
@@ -364,7 +386,7 @@ func (w *Writer) Flush() error {
 		return w.err
 	}
 
-	w.err = w.flushFragment(true)
+	w.err = w.flushFragment(true, w.compress)
 	w.n = 0
 	w.dirty = false
 	w.fragmented = false
@@ -379,14 +401,14 @@ func (w *Writer) FlushFragment() error {
 		return w.err
 	}
 
-	w.err = w.flushFragment(false)
+	w.err = w.flushFragment(false, w.compress)
 	w.n = 0
 	w.fragmented = true
 
 	return w.err
 }
 
-func (w *Writer) flushFragment(fin bool) error {
+func (w *Writer) flushFragment(fin bool, compress bool) error {
 	frame := ws.NewFrame(w.opCode(), fin, w.buf[:w.n])
 	if w.state.ClientSide() {
 		frame = ws.MaskFrameInPlace(frame)
@@ -398,13 +420,24 @@ func (w *Writer) flushFragment(fin bool) error {
 	buf := bytesWriter{
 		buf: w.raw[offset:head],
 	}
-	if err := ws.WriteHeader(&buf, frame.Header); err != nil {
+	if err := ws.WriteHeader(&buf, frame.Header, compress); err != nil {
 		// Must never be reached.
 		panic("dump header error: " + err.Error())
 	}
 
-	_, err := w.dest.Write(w.raw[offset : head+w.n])
+	//if uncompressionW, ok := w.dest.(*ws.FlateWriteWrapper); ok {
+	//	if _, err := uncompressionW.Tw.W.Write(w.raw[offset:head]); err != nil {
+	//		return err
+	//	}
+	//} else {
+	//	if _, err := w.dest.Write(w.raw[offset:head]); err != nil {
+	//		return err
+	//	}
+	//}
 
+	//n, err := w.dest.Write(w.raw[head : head+w.n])
+	n, err := w.dest.Write(w.raw[offset : head+w.n])
+	fmt.Println(n)
 	return err
 }
 
@@ -447,4 +480,12 @@ func writeFrame(w io.Writer, s ws.State, op ws.OpCode, fin bool, p []byte) error
 	}
 
 	return ws.WriteFrame(w, frame)
+}
+
+type closableBuffer struct {
+	*bytes.Buffer
+}
+
+func (*closableBuffer) Close() error {
+	return nil
 }

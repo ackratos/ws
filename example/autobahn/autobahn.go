@@ -212,7 +212,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		case ws.OpPing:
 			header.OpCode = ws.OpPong
 			header.Masked = false
-			ws.WriteHeader(conn, header)
+			ws.WriteHeader(conn, header, false)
 			io.CopyN(conn, cipherReader, header.Length)
 			continue
 
@@ -293,7 +293,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		header.Masked = false
-		ws.WriteHeader(conn, header)
+		ws.WriteHeader(conn, header, false)
 		conn.Write(payload)
 	}
 }

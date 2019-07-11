@@ -46,13 +46,18 @@ func HeaderSize(h Header) (n int) {
 }
 
 // WriteHeader writes header binary representation into w.
-func WriteHeader(w io.Writer, h Header) error {
+func WriteHeader(w io.Writer, h Header, compress bool) error {
 	// Make slice of bytes with capacity 14 that could hold any header.
 	bts := make([]byte, MaxHeaderSize)
 
 	if h.Fin {
 		bts[0] |= bit0
 	}
+
+	if compress && (h.OpCode == OpText || h.OpCode == OpBinary) {
+		bts[0] |= bit1 // for compression
+	}
+
 	bts[0] |= h.Rsv << 4
 	bts[0] |= byte(h.OpCode)
 
@@ -82,13 +87,12 @@ func WriteHeader(w io.Writer, h Header) error {
 	}
 
 	_, err := w.Write(bts[:n])
-
 	return err
 }
 
 // WriteFrame writes frame binary representation into w.
 func WriteFrame(w io.Writer, f Frame) error {
-	err := WriteHeader(w, f.Header)
+	err := WriteHeader(w, f.Header, false)
 	if err != nil {
 		return err
 	}

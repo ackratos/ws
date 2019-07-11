@@ -104,7 +104,7 @@ func TestReaderNextFrameAndReadEOF(t *testing.T) {
 				// and non-successfully read of the body.
 				var buf bytes.Buffer
 				f := ws.NewTextFrame([]byte("this part will be lost"))
-				if err := ws.WriteHeader(&buf, f.Header); err != nil {
+				if err := ws.WriteHeader(&buf, f.Header, false); err != nil {
 					panic(err)
 				}
 				return &buf
@@ -116,7 +116,7 @@ func TestReaderNextFrameAndReadEOF(t *testing.T) {
 			source: func() io.Reader {
 				var buf bytes.Buffer
 				f := ws.NewTextFrame([]byte("foobar"))
-				if err := ws.WriteHeader(&buf, f.Header); err != nil {
+				if err := ws.WriteHeader(&buf, f.Header, false); err != nil {
 					panic(err)
 				}
 				buf.WriteString("foo")

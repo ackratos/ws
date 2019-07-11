@@ -11,7 +11,7 @@ func TestWriteHeader(t *testing.T) {
 	for i, test := range RWTestCases {
 		t.Run(fmt.Sprintf("#%d", i), func(t *testing.T) {
 			buf := &bytes.Buffer{}
-			err := WriteHeader(buf, test.Header)
+			err := WriteHeader(buf, test.Header, false)
 			if test.Err && err == nil {
 				t.Errorf("expected error, got nil")
 			}
@@ -32,7 +32,7 @@ func BenchmarkWriteHeader(b *testing.B) {
 	for _, bench := range RWBenchCases {
 		b.Run(bench.label, func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
-				if err := WriteHeader(ioutil.Discard, bench.header); err != nil {
+				if err := WriteHeader(ioutil.Discard, bench.header, false); err != nil {
 					b.Fatal(err)
 				}
 			}
